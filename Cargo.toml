@@ -1,0 +1,19 @@
+[package]
+name = "pomidor"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4.40", features = ["serde"] }
+clap = { version = "4.5.34", features = ["derive"] }
+dirs = "6.0.0"
+flume = "0.11.1"
+humantime = "2.2.0"
+humantime-serde = "1.1.1"
+notify-rust = "4"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tokio = { version = "1.44.1", features = ["rt", "macros", "io-util", "time", "net", "sync"] }
+toml = "0.8.20"

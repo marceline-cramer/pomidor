@@ -296,13 +296,16 @@ impl Daemon {
 
                 if timer.mode != old_timer.mode {
                     if let Some(msg) = config.notification.for_mode(timer.mode) {
-                        notify_rust::Notification::new()
+                        let result = notify_rust::Notification::new()
                             .summary(&timer.mode.to_string())
                             .body(msg)
                             .timeout(-1)
                             .show_async()
-                            .await
-                            .expect("failed to show notification");
+                            .await;
+
+                        if let Err(err) = result {
+                            eprintln!("failed to show notification: {err:?}");
+                        }
                     }
                 }
 
@@ -540,6 +543,7 @@ impl Args {
                 std::fs::read_to_string(config_path).context("failed to read config file")?;
             toml::from_str(&toml).context("failed to deserialize config file")
         } else {
+            // TODO: create a parent directory if necessary
             let config = Config::default();
             let toml =
                 toml::to_string_pretty(&config).context("failed to serialize default config")?;

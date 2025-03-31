@@ -296,10 +296,16 @@ impl Daemon {
 
                 if timer.mode != old_timer.mode {
                     if let Some(msg) = config.notification.for_mode(timer.mode) {
+                        let timeout = config
+                            .notification
+                            .timeout
+                            .map(|d| d.as_millis() as i32)
+                            .unwrap_or(-1);
+
                         let result = notify_rust::Notification::new()
                             .summary(&timer.mode.to_string())
                             .body(msg)
-                            .timeout(-1)
+                            .timeout(timeout)
                             .show_async()
                             .await;
 
@@ -609,13 +615,21 @@ pub struct WaybarConfig {}
 #[derive(Deserialize, Serialize)]
 pub struct NotificationConfig {
     #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub timeout: Option<Duration>,
+
+    #[serde(default)]
     pub pestering: Option<String>,
+
     #[serde(default)]
     pub snoozing: Option<String>,
+
     #[serde(default)]
     pub short_break: Option<String>,
+
     #[serde(default)]
     pub long_break: Option<String>,
+
     #[serde(default)]
     pub focus: Option<String>,
 }
@@ -623,6 +637,7 @@ pub struct NotificationConfig {
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
+            timeout: None,
             pestering: None,
             snoozing: None,
             short_break: Some(

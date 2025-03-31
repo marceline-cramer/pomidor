@@ -154,12 +154,15 @@ impl WaybarOutput {
         // TODO: configurable? kebab-case?
         let class = format!("{:?}", timer.mode).to_lowercase();
 
+        // TODO: configurable?
+        let tooltip = format!("{} short breaks left", timer.short_breaks);
+
         Self {
             text,
             class,
-            alt: "".to_string(),     // TODO: ?
-            tooltip: "".to_string(), // TODO: show number of breaks left and custom reminders
-            percentage: 0,           // TODO: how to use this effectively?
+            tooltip,
+            alt: "".to_string(), // TODO: ?
+            percentage: 0,       // TODO: how to use this effectively?
         }
     }
 

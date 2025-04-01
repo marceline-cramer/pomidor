@@ -539,20 +539,25 @@ impl Args {
         #[cfg(debug_assertions)]
         return Ok(Config::default());
 
-        let config_path = self
+        let config_dir = self
             .config
             .clone()
-            .or_else(|| {
-                dirs::config_local_dir().map(|path| path.join("pomidor").join("pomidor.toml"))
-            })
+            .or_else(|| dirs::config_local_dir().map(|path| path.join("pomidor")))
             .context("failed to locate config directory")?;
+
+        let config_path = config_dir.join("pomidor.toml");
 
         if config_path.exists() {
             let toml =
                 std::fs::read_to_string(config_path).context("failed to read config file")?;
             toml::from_str(&toml).context("failed to deserialize config file")
         } else {
-            // TODO: create a parent directory if necessary
+            // create a parent directory if necessary
+            if !config_dir.exists() {
+                std::fs::create_dir_all(&config_dir)
+                    .context("failed to create config parent directory")?;
+            }
+
             let config = Config::default();
             let toml =
                 toml::to_string_pretty(&config).context("failed to serialize default config")?;

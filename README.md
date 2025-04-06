@@ -13,3 +13,13 @@ There will be all sorts of neato-keeno documentation and screenshots here at som
 - highly configurable
 - CLI-based timer interaction
 - customizable desktop notifications for timer alarms
+
+## Todo
+- [ ] Configurable sounds (not supported by all notification daemons)
+  - perhaps the deamon could play the sound?
+- [ ] Time counting modes
+- [ ] interim periods between focus and breaks
+- [ ] AUR package
+- [ ] waybar instructions
+- [ ] screenshots in readme
+- [ ] improve code organization

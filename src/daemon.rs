@@ -17,6 +17,8 @@
 
 use std::{
     fmt::{Debug, Display},
+    fs::File,
+    io::BufReader,
     path::PathBuf,
 };
 
@@ -24,6 +26,7 @@ use anyhow::{bail, Context};
 use chrono::{DateTime, Local};
 use clap::Subcommand;
 use flume::{unbounded, Receiver, Sender};
+use rodio::{Decoder, OutputStream, Source};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -163,24 +166,7 @@ impl Daemon {
                 let _ = state_change_tx.send(timer.clone());
 
                 if timer.mode != old_timer.mode {
-                    if let Some(msg) = config.notification.for_mode(timer.mode) {
-                        let timeout = config
-                            .notification
-                            .timeout
-                            .map(|d| d.as_millis() as i32)
-                            .unwrap_or(-1);
-
-                        let result = notify_rust::Notification::new()
-                            .summary(&timer.mode.to_string())
-                            .body(msg)
-                            .timeout(timeout)
-                            .show_async()
-                            .await;
-
-                        if let Err(err) = result {
-                            eprintln!("failed to show notification: {err:?}");
-                        }
-                    }
+                    Self::on_state_change(&config, timer.clone()).await;
                 }
 
                 old_timer = timer.clone();
@@ -189,6 +175,35 @@ impl Daemon {
 
         // remove old socket
         let _ = std::fs::remove_file(socket);
+    }
+
+    async fn on_state_change(config: &Config, timer: TimerState) {
+        if let Some(msg) = config.notification.for_mode(timer.mode) {
+            let timeout = config
+                .notification
+                .timeout
+                .map(|d| d.as_millis() as i32)
+                .unwrap_or(-1);
+
+            let result = notify_rust::Notification::new()
+                .summary(&timer.mode.to_string())
+                .body(msg)
+                .timeout(timeout)
+                .show_async()
+                .await;
+
+            if let Err(err) = result {
+                eprintln!("failed to show notification: {err:?}");
+            }
+        }
+
+        if let Some(sound_path) = config.sound.sound.clone() {
+            std::thread::spawn(|| {
+                let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+                let file = File::open(sound_path).unwrap();
+                stream_handle.play_once(file).unwrap().sleep_until_end();
+            });
+        }
     }
 
     pub async fn on_message(

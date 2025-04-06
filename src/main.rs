@@ -247,6 +247,7 @@ pub struct Config {
     pub timer: TimerConfig,
     pub waybar: WaybarConfig,
     pub notification: NotificationConfig,
+    pub sound: SoundConfig,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -265,6 +266,12 @@ pub struct TimerConfig {
 
     /// The number of short breaks to take before a long break.
     pub short_breaks: u8,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+pub struct SoundConfig {
+    #[serde(default)]
+    pub sound: Option<PathBuf>,
 }
 
 impl Default for TimerConfig {

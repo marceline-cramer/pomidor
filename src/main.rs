@@ -272,6 +272,8 @@ pub struct TimerConfig {
 pub struct SoundConfig {
     #[serde(default)]
     pub sound: Option<PathBuf>,
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 impl Default for TimerConfig {

@@ -18,15 +18,18 @@
 use std::{
     fmt::{Debug, Display},
     fs::File,
-    io::BufReader,
     path::PathBuf,
+    sync::Arc,
 };
 
 use anyhow::{bail, Context};
 use chrono::{DateTime, Local};
 use clap::Subcommand;
 use flume::{unbounded, Receiver, Sender};
-use rodio::{Decoder, OutputStream, Source};
+use rodio::{
+    cpal::{self, traits::HostTrait},
+    DeviceTrait, OutputStream, OutputStreamHandle,
+};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -78,12 +81,24 @@ impl Daemon {
         let (state_change_tx, _) = broadcast::channel(128);
         let (message_tx, message_rx) = unbounded();
 
+        let (_, stream_handle) = if let Some(device) = config.sound.device.clone() {
+            cpal::default_host()
+                .output_devices()
+                .unwrap()
+                .find(|x| x.name().unwrap() == device)
+                .map(|device| OutputStream::try_from_device(&device).unwrap())
+                .unwrap_or_else(|| OutputStream::try_default().unwrap())
+        } else {
+            OutputStream::try_default().unwrap()
+        };
+
         // spawn the main daemon thread
         tokio::spawn(Self::run_inner(
             config,
             state_change_tx.clone(),
             message_rx,
             socket.clone(),
+            Arc::new(stream_handle),
         ));
 
         // create a base daemon to respond to clients with
@@ -117,6 +132,7 @@ impl Daemon {
         state_change_tx: broadcast::Sender<TimerState>,
         message_rx: Receiver<ClientMessage>,
         socket: PathBuf,
+        stream_handle: Arc<OutputStreamHandle>,
     ) {
         let mut timer = TimerState::new(&config);
         let mut old_timer = timer.clone();
@@ -166,7 +182,7 @@ impl Daemon {
                 let _ = state_change_tx.send(timer.clone());
 
                 if timer.mode != old_timer.mode {
-                    Self::on_state_change(&config, timer.clone()).await;
+                    Self::on_state_change(&config, stream_handle.clone(), timer.clone()).await;
                 }
 
                 old_timer = timer.clone();
@@ -177,7 +193,16 @@ impl Daemon {
         let _ = std::fs::remove_file(socket);
     }
 
-    async fn on_state_change(config: &Config, timer: TimerState) {
+    async fn play_sound(stream_handle: Arc<OutputStreamHandle>, source: PathBuf) {
+        let file = File::open(source).unwrap();
+        stream_handle.play_once(file).unwrap().sleep_until_end();
+    }
+
+    async fn on_state_change(
+        config: &Config,
+        stream_handle: Arc<OutputStreamHandle>,
+        timer: TimerState,
+    ) {
         if let Some(msg) = config.notification.for_mode(timer.mode) {
             let timeout = config
                 .notification
@@ -198,11 +223,7 @@ impl Daemon {
         }
 
         if let Some(sound_path) = config.sound.sound.clone() {
-            std::thread::spawn(|| {
-                let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-                let file = File::open(sound_path).unwrap();
-                stream_handle.play_once(file).unwrap().sleep_until_end();
-            });
+            tokio::spawn(Self::play_sound(stream_handle, sound_path));
         }
     }
 

@@ -15,8 +15,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Pomidor. If not, see <https://www.gnu.org/licenses/>.
 
+use std::fmt::Debug;
+
 use anyhow::{bail, Context};
+use flume::unbounded;
 use flume::{Receiver, Sender};
+use serde::{de::DeserializeOwned, Serialize};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::daemon::{ClientMessage, DaemonMessage};
 
@@ -38,6 +43,46 @@ impl Connection<ClientMessage, DaemonMessage> {
             bail!("expected ACK from server, got {msg:?}");
         } else {
             Ok(())
+        }
+    }
+}
+
+impl<T: Debug + Serialize + Send + 'static, R: Debug + DeserializeOwned + Send + 'static>
+    Connection<T, R>
+{
+    pub fn new(
+        mut rx: impl AsyncRead + Unpin + Send + 'static,
+        mut tx: impl AsyncWrite + Unpin + Send + 'static,
+    ) -> Self {
+        let (outgoing_tx, outgoing_rx) = unbounded();
+        let (incoming_tx, incoming_rx) = unbounded();
+
+        tokio::spawn(async move {
+            while let Ok(op) = outgoing_rx.recv_async().await {
+                let payload = serde_json::to_vec(&op).unwrap();
+                let len = payload.len() as u32;
+                tx.write_u32_le(len).await.unwrap();
+                tx.write_all(&payload).await.unwrap();
+                tx.flush().await.unwrap();
+            }
+        });
+
+        #[allow(clippy::read_zero_byte_vec)]
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            while let Ok(len) = rx.read_u32_le().await {
+                buf.resize(len as usize, 0);
+                rx.read_exact(&mut buf).await.unwrap();
+                let op = serde_json::from_slice(&buf).unwrap();
+                if incoming_tx.send(op).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            tx: outgoing_tx,
+            rx: incoming_rx,
         }
     }
 }

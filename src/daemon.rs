@@ -81,6 +81,7 @@ impl Daemon {
         let (state_change_tx, _) = broadcast::channel(128);
         let (message_tx, message_rx) = unbounded();
 
+        // initialize sound device from configured device or use default
         let (_, stream_handle) = if let Some(device) = config.sound.device.clone() {
             cpal::default_host()
                 .output_devices()

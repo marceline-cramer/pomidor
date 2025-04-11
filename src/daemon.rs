@@ -81,7 +81,8 @@ impl Daemon {
         let (state_change_tx, _) = broadcast::channel(128);
         let (message_tx, message_rx) = unbounded();
 
-        let (_, stream_handle) = if let Some(device) = config.sound.device.clone() {
+        // Sound will not be played if `stream` is dropped
+        let (_stream, stream_handle) = if let Some(device) = config.sound.device.clone() {
             cpal::default_host()
                 .output_devices()
                 .unwrap()
@@ -193,7 +194,7 @@ impl Daemon {
         let _ = std::fs::remove_file(socket);
     }
 
-    async fn play_sound(stream_handle: Arc<OutputStreamHandle>, source: PathBuf) {
+    fn play_sound(stream_handle: Arc<OutputStreamHandle>, source: PathBuf) {
         let file = File::open(source).unwrap();
         stream_handle.play_once(file).unwrap().sleep_until_end();
     }
@@ -223,7 +224,7 @@ impl Daemon {
         }
 
         if let Some(sound_path) = config.sound.sound.clone() {
-            tokio::spawn(Self::play_sound(stream_handle, sound_path));
+            std::thread::spawn(move || Self::play_sound(stream_handle, sound_path));
         }
     }
 

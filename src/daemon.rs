@@ -214,6 +214,7 @@ impl Daemon {
 
             let result = notify_rust::Notification::new()
                 .summary(&timer.mode.to_string())
+                .urgency(notify_rust::Urgency::Critical)
                 .body(msg)
                 .timeout(timeout)
                 .show_async()

@@ -15,44 +15,24 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Pomidor. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    fmt::{Debug, Display},
-    fs::File,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{fs::File, path::PathBuf, sync::Arc};
 
 use anyhow::{bail, Context};
-use chrono::{DateTime, Local};
-use clap::Subcommand;
-use flume::{unbounded, Receiver, Sender};
+use chrono::Local;
+use flume::{Receiver, Sender};
 use rodio::{
     cpal::{self, traits::HostTrait},
     DeviceTrait, OutputStream, OutputStreamHandle,
 };
-use serde::{Deserialize, Serialize};
 use tokio::{
     net::{UnixListener, UnixStream},
     sync::broadcast,
 };
 
-use crate::{Config, Connection};
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub enum DaemonMessage {
-    Ack,
-    StateChange(TimerState),
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum ClientMessage {
-    Ping,
-    Watch,
-    Update(TimerUpdate),
-
-    // TODO: live config file updates?
-    ReloadConfig,
-}
+use crate::{
+    protocol::{ClientMessage, DaemonMessage, TimerMode, TimerState, TimerUpdate},
+    Config, Connection,
+};
 
 #[derive(Clone)]
 pub struct Daemon {
@@ -79,7 +59,7 @@ impl Daemon {
 
         // create channels to talk to the main daemon thread
         let (state_change_tx, _) = broadcast::channel(128);
-        let (message_tx, message_rx) = unbounded();
+        let (message_tx, message_rx) = flume::unbounded();
 
         // initialize sound device from configured device or use default
         // Sound will not be played if `stream` is dropped
@@ -284,16 +264,10 @@ impl Daemon {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct TimerState {
-    pub deadline: Option<DateTime<Local>>,
-    pub short_breaks: u8,
-    pub mode: TimerMode,
-}
-
 impl TimerState {
     pub fn new(config: &Config) -> Self {
         Self {
+            started: Local::now(),
             deadline: None,
             short_breaks: config.timer.short_breaks,
             mode: TimerMode::Pestering,
@@ -303,7 +277,7 @@ impl TimerState {
     pub fn on_deadline(&mut self, config: &Config) {
         let now = Local::now();
 
-        use TimerMode::*;
+        use crate::protocol::TimerMode::*;
         match self.mode {
             Pestering => {
                 // will not be reached by deadline but can occur on update
@@ -355,54 +329,4 @@ impl TimerState {
             (Snooze { .. }, _) => {}
         }
     }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub enum TimerMode {
-    /// Hey. You should be using the Pomodoro Technique.
-    Pestering,
-
-    /// Okay, I guess you can use me later...
-    Snoozing,
-
-    /// Short break period.
-    ShortBreak,
-
-    /// Long break period.
-    LongBreak,
-
-    /// Time to focus!
-    Focus,
-}
-
-impl Display for TimerMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TimerMode::*;
-        let name = match self {
-            Pestering => "Pestering",
-            Snoozing => "Snoozing",
-            ShortBreak => "Short break",
-            LongBreak => "Long break",
-            Focus => "Focus",
-        };
-
-        write!(f, "{name}")
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Subcommand)]
-pub enum TimerUpdate {
-    /// Skips this timer and goes to the next one.
-    Skip,
-
-    /// Resets the timer to its default state (pestering with all breaks).
-    Reset,
-
-    /// Adds snooze time to pester or snooze modes.
-    Snooze {
-        /// The amount of time to snooze for.
-        #[serde(with = "humantime_serde")]
-        #[clap(value_parser = humantime::parse_duration)]
-        time: std::time::Duration,
-    },
 }

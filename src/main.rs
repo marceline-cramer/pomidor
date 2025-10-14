@@ -16,7 +16,7 @@
 
 use std::{fmt::Debug, path::PathBuf, time::Duration};
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use chrono::{DateTime, Local};
 use clap::{Parser, Subcommand};
 use connection::Connection;
@@ -24,8 +24,12 @@ use serde::{Deserialize, Serialize};
 
 mod connection;
 mod daemon;
+mod format;
+mod protocol;
 
-use daemon::{ClientMessage, DaemonMessage, TimerState, TimerUpdate};
+use protocol::{ClientMessage, DaemonMessage, TimerState, TimerUpdate};
+
+use crate::format::{Formatter, TemplateContext};
 
 #[derive(Subcommand)]
 pub enum Command {
@@ -35,8 +39,74 @@ pub enum Command {
     /// Connects to the pomodoro daemon and displays regular Waybar updates.
     Waybar,
 
+    /// Watches for changes in the pomodoro timer.
+    Watch {
+        /// The interval at which to poll for updates if the state has not changed.
+        #[clap(long, default_value = "100ms")]
+        #[clap(value_parser = humantime::parse_duration)]
+        interval: Duration,
+
+        #[clap(flatten)]
+        args: WatchArgs,
+    },
+
+    /// Displays the current timer state.
+    Get {
+        #[clap(flatten)]
+        args: WatchArgs,
+    },
+
     #[clap(flatten)]
     Update(TimerUpdate),
+}
+
+#[derive(Parser)]
+#[group(required = true, multiple = false)]
+pub struct WatchArgs {
+    /// Use a template to format the timer state.
+    template: Option<String>,
+
+    /// Return the timer state as JSON.
+    #[clap(short, long)]
+    json: bool,
+}
+
+impl WatchArgs {
+    /// Creates a closure that renders timer state on state changes.
+    pub fn render<'a>(
+        &'a self,
+        formatter: &'a Formatter,
+    ) -> anyhow::Result<Box<dyn FnMut(TimerState) + 'a>> {
+        if self.json {
+            Ok(Box::new(|timer| {
+                let ctx = TemplateContext::from(&timer);
+                println!("{}", serde_json::to_string(&ctx).unwrap());
+            }))
+        } else {
+            // compile the template first to catch syntax errors early and save performance
+            let template = self.template.as_ref().unwrap();
+            let template = formatter.make_template(template)?;
+
+            // begin subscription with no last output to immediately render
+            let mut last_output = None;
+
+            Ok(Box::new(move |timer| {
+                // format the newest timer state
+                let output = template.render(&timer);
+
+                // discard new output if it hasn't changed
+                if last_output.as_ref() == Some(&output) {
+                    return;
+                }
+
+                // display formatted output
+                println!("{output}");
+
+                // update last output
+                last_output = Some(output);
+            }))
+        }
+    }
 }
 
 impl Command {
@@ -51,51 +121,57 @@ impl Command {
                 })
         };
 
+        // create a persistent formatter
+        let formatter = Formatter::new();
+
         match self {
             Command::Daemon => daemon::Daemon::run(config, &socket).await,
+            Command::Get { args } => {
+                // create timer state handler
+                let mut handler = args.render(&formatter)?;
+
+                // connect to the daemon
+                let conn = connect.await?;
+
+                // watch for state changes
+                conn.watch().await?;
+
+                // retrieve the next state change
+                let state = conn
+                    .next_change()
+                    .await?
+                    .context("expected state change message")?;
+
+                // invoke handler once on the current state
+                handler(state);
+
+                // done
+                Ok(())
+            }
+            Command::Watch { args, interval } => {
+                // create timer state handler
+                let handler = args.render(&formatter)?;
+
+                // connect to the daemon
+                let conn = connect.await?;
+
+                // invoke handler on state changes until disconnection
+                conn.subscribe_interval(interval, handler).await
+            }
             Command::Waybar => {
+                // connect to the daemon
                 // TODO: display any encountered errors as waybar errors
                 let conn = connect.await?;
 
-                conn.tx
-                    .send(ClientMessage::Watch)
-                    .context("failed to send watch message")?;
-
-                conn.expect_ack().await?;
-
-                let init_msg = conn
-                    .rx
-                    .recv_async()
-                    .await
-                    .context("failed to receive initial timer state")?;
-
-                let DaemonMessage::StateChange(mut timer) = init_msg else {
-                    bail!("expected next daemon message to be timer state");
-                };
-
-                let mut old_output = None;
-                let mut output;
-                loop {
-                    let timeout = std::time::Duration::from_millis(500);
-                    if let Ok(msg) = tokio::time::timeout(timeout, conn.rx.recv_async()).await {
-                        let Ok(msg) = msg else {
-                            break;
-                        };
-
-                        if let DaemonMessage::StateChange(new_timer) = msg {
-                            timer = new_timer;
-                        }
-                    }
-
+                // subscribe to updates and update waybar with the current state
+                conn.subscribe(|timer| {
                     let now = Local::now();
-                    output = WaybarOutput::new(&config, &timer, now);
+                    let output = WaybarOutput::new(&config, &timer, now);
+                    output.print().expect("failed to print waybar output");
+                })
+                .await?;
 
-                    if Some(&output) != old_output.as_ref() {
-                        output.print()?;
-                        old_output = Some(output.clone());
-                    }
-                }
-
+                // report to waybar that the connection has closed
                 WaybarOutput::error("connection to daemon closed").print()?;
                 Ok(())
             }
@@ -329,8 +405,8 @@ impl Default for NotificationConfig {
 }
 
 impl NotificationConfig {
-    pub fn for_mode(&self, mode: daemon::TimerMode) -> Option<&String> {
-        use daemon::TimerMode::*;
+    pub fn for_mode(&self, mode: protocol::TimerMode) -> Option<&String> {
+        use protocol::TimerMode::*;
         match mode {
             Pestering => self.pestering.as_ref(),
             Snoozing => self.snoozing.as_ref(),

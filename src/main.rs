@@ -37,7 +37,12 @@ pub enum Command {
     Daemon,
 
     /// Connects to the pomodoro daemon and displays regular Waybar updates.
-    Waybar,
+    Waybar {
+        /// The interval at which to poll for updates if the state has not changed.
+        #[clap(long, default_value = "100ms")]
+        #[clap(value_parser = humantime::parse_duration)]
+        interval: Duration,
+    },
 
     /// Watches for changes in the pomodoro timer.
     Watch {
@@ -158,13 +163,13 @@ impl Command {
                 // invoke handler on state changes until disconnection
                 conn.subscribe_interval(interval, handler).await
             }
-            Command::Waybar => {
+            Command::Waybar { interval } => {
                 // connect to the daemon
                 // TODO: display any encountered errors as waybar errors
                 let conn = connect.await?;
 
                 // subscribe to updates and update waybar with the current state
-                conn.subscribe(|timer| {
+                conn.subscribe_interval(interval, |timer| {
                     let now = Local::now();
                     let output = WaybarOutput::new(&config, &timer, now);
                     output.print().expect("failed to print waybar output");

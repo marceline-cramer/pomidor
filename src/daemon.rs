@@ -161,6 +161,8 @@ impl Daemon {
 
             // always broadcast timer changes
             if timer != old_timer {
+                timer.started = Local::now();
+
                 let _ = state_change_tx.send(timer.clone());
 
                 if timer.mode != old_timer.mode {
